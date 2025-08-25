@@ -1,0 +1,17 @@
+# filebeat/filebeat.yml
+
+# This file configures Filebeat to read from the log files
+# and send the data to our Logstash container.
+
+filebeat.inputs:
+- type: filestream
+  id: nginx-logs
+  enabled: true
+  paths:
+    - /var/log/nginx/*.log # Path inside the Filebeat container where logs are mounted
+
+# Send the collected logs to Logstash on port 5044.
+# We use "logstash:5044" because Docker Compose lets us refer
+# to other containers by their service name.
+output.logstash:
+  hosts: ["logstash:5044"]

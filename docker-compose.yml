@@ -1,0 +1,107 @@
+# docker-compose.yml
+# This is the master file that defines and links all our services.
+
+version: '3.8'
+
+services:
+  # ------------------------------------------
+  # Service 1: Nginx (The Web Server we are monitoring)
+  # ------------------------------------------
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    ports:
+      - "8080:80" # Access Nginx on http://localhost:8080
+    volumes:
+      - ./nginx/html:/usr/share/nginx/html # Mount our custom index.html
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro # Mount our Nginx config
+      - ./logs/nginx:/var/log/nginx # Use a bind mount for logs
+    # Add a healthcheck to ensure Nginx is running before other services depend on it
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - elk-network
+
+  # ------------------------------------------
+  # Service 2: Elasticsearch (The Database and Search Engine)
+  # ------------------------------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.1
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false # IMPORTANT: For development only. Disables authentication.
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m" # Set heap size to avoid memory issues
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - elk-network
+
+  # ------------------------------------------
+  # Service 3: Logstash (The Log Processor)
+  # ------------------------------------------
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.14.1
+    container_name: logstash
+    environment:
+      - "LS_JAVA_OPTS=-Xms256m -Xmx256m" # Set heap size to control memory usage
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline/:ro
+    ports:
+      - "5044:5044" # Port for Filebeat to send data
+    depends_on:
+      - elasticsearch
+    networks:
+      - elk-network
+
+  # ------------------------------------------
+  # Service 4: Kibana (The Visualization Dashboard)
+  # ------------------------------------------
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.14.1
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200 # Connect to Elasticsearch using its service name
+    ports:
+      - "5601:5601" # Access Kibana UI on http://localhost:5601
+    depends_on:
+      - elasticsearch
+    networks:
+      - elk-network
+
+  # ------------------------------------------
+  # Service 5: Filebeat (The Log Shipper)
+  # ------------------------------------------
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.14.1
+    container_name: filebeat
+    user: root # Run as root to access Docker logs and sockets if needed
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./logs/nginx:/var/log/nginx:ro # Use a bind mount for logs (read-only)
+    command: filebeat -e -strict.perms=false
+    depends_on:
+      logstash:
+        condition: service_started
+      # Make Filebeat wait until Nginx is confirmed to be healthy
+      nginx:
+        condition: service_healthy
+    networks:
+      - elk-network
+
+# ------------------------------------------
+# Define shared networks and volumes
+# ------------------------------------------
+networks:
+  elk-network:
+    driver: bridge
+
+volumes:
+  es-data:
+    driver: local
+  # The nginx-logs named volume is no longer needed
